@@ -1,0 +1,129 @@
+-- Grapheme cluster boundaries: UAX #29 section 3, as the crate implements it
+-- in `src/grapheme.rs`.
+--
+-- A boundary between two characters is decided by their categories alone
+-- (`checkPair`), except for three rules that look further back: GB9c for
+-- Indic conjuncts, GB11 for emoji ZWJ sequences, and GB12/13 for pairs of
+-- regional indicators. The crate's cursor answers those incrementally, for
+-- text that arrives in chunks; with the whole string in hand the answer is
+-- the same, and simpler to write down.
+--
+-- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
+-- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
+
+use Std.Collections.Vector as V
+use unicodeSegmentation.Lookup (graphemeCat, isIncbLinker, isIncbExtend)
+use unicodeSegmentation.Text (count, codeAt)
+
+-- The categories, numbered as `Tables.mw` numbers them.
+def gcAny = 0
+def gcCR = 1
+def gcControl = 2
+def gcExtend = 3
+def gcExtendedPictographic = 4
+def gcInCBConsonant = 5
+def gcL = 6
+def gcLF = 7
+def gcLV = 8
+def gcLVT = 9
+def gcPrepend = 10
+def gcRegionalIndicator = 11
+def gcSpacingMark = 12
+def gcT = 13
+def gcV = 14
+def gcZWJ = 15
+
+-- What a pair of categories says about the boundary between them.
+def notBreak = 0
+def isBreak = 1
+-- A break unless extended clusters are asked for.
+def breakUnlessExtended = 2
+-- GB9c: look back for a conjunct.
+def lookForConjunct = 3
+-- GB12, GB13: a break if an even number of regional indicators come before.
+def countRegional = 4
+-- GB11: no break if an emoji and extenders come before the ZWJ.
+def lookForEmoji = 5
+
+fun isControlLike c = c == gcControl or c == gcCR or c == gcLF
+
+fun checkPair before after =
+  if before == gcCR and after == gcLF
+  then notBreak
+  else if isControlLike before
+  then isBreak
+  else if isControlLike after
+  then isBreak
+  else if before == gcL and (after == gcL or after == gcV or after == gcLV or after == gcLVT)
+  then notBreak
+  else if (before == gcLV or before == gcV) and (after == gcV or after == gcT)
+  then notBreak
+  else if (before == gcLVT or before == gcT) and after == gcT
+  then notBreak
+  else if after == gcExtend or after == gcZWJ
+  then notBreak
+  else if after == gcSpacingMark
+  then breakUnlessExtended
+  else if before == gcPrepend
+  then breakUnlessExtended
+  else if after == gcInCBConsonant
+  then lookForConjunct
+  else if before == gcZWJ and after == gcExtendedPictographic
+  then lookForEmoji
+  else if before == gcRegionalIndicator and after == gcRegionalIndicator
+  then countRegional
+  else isBreak
+
+fun catAt t i = graphemeCat (codeAt t i)
+
+-- GB9c, from character `i` back: linkers and extenders, at least one linker,
+-- then a consonant, means no break.
+fun conjunctBreak t i linkers =
+  if i < 0
+  then True
+  else
+    let cp = codeAt t i in
+    if isIncbLinker cp
+    then conjunctBreak t (i - 1) (linkers + 1)
+    else if isIncbExtend cp
+    then conjunctBreak t (i - 1) linkers
+    else not (linkers > 0 and graphemeCat cp == gcInCBConsonant)
+
+-- How many regional indicators run back from character `i`.
+fun regionalRun t i n =
+  if i >= 0 and catAt t i == gcRegionalIndicator then regionalRun t (i - 1) (n + 1) else n
+
+-- GB11, from character `i` back, past the ZWJ: extenders, then an emoji,
+-- means no break.
+fun emojiBreak t i =
+  if i < 0
+  then True
+  else
+    let c = catAt t i in
+    if c == gcExtend then emojiBreak t (i - 1) else not (c == gcExtendedPictographic)
+
+-- Whether there is a boundary before character `i` of `t`, `0 < i < count t`.
+@pub(pkg) fun boundaryBefore t extended i =
+  let rule = checkPair (catAt t (i - 1)) (catAt t i) in
+  if rule == notBreak
+  then False
+  else if rule == isBreak
+  then True
+  else if rule == breakUnlessExtended
+  then not extended
+  else if rule == lookForConjunct
+  then not extended or conjunctBreak t (i - 1) 0
+  else if rule == countRegional
+  then regionalRun t (i - 1) 0 % 2 == 0
+  else emojiBreak t (i - 2)
+
+fun endsFrom t extended i out =
+  if i >= count t
+  then V.pushBack out i
+  else if boundaryBefore t extended i
+  then endsFrom t extended (i + 1) (V.pushBack out i)
+  else endsFrom t extended (i + 1) out
+
+-- The character index where each cluster ends.
+@pub(pkg) fun graphemeEnds t extended =
+  if count t == 0 then V.empty else endsFrom t extended 1 V.empty

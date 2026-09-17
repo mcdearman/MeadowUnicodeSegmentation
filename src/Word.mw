@@ -1,0 +1,285 @@
+-- Word boundaries: UAX #29 section 4, as the crate implements it in
+-- `src/word.rs`.
+--
+-- `wordEnd` is the crate's forward state machine (`UWordBounds::next`), which
+-- reads one word bound from a starting character: it follows the rules that
+-- join characters, skips formatting and extending characters (WB4), and backs
+-- up when a letter or number fails to follow a mid-word character.
+--
+-- `unicodeWords` keeps the pieces with a letter or number in them, and for an
+-- all-ASCII string uses the crate's faster ASCII segmenter instead, which
+-- answers slightly differently in places; it is ported too, so that the
+-- answers agree with the crate's.
+--
+-- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
+-- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
+
+use Std.Collections.Vector as V
+use unicodeSegmentation.Lookup (wordCat, isPictographic, isAlphanumeric)
+use unicodeSegmentation.Text (count, codeAt, byteAt)
+
+-- The categories, numbered as `Tables.mw` numbers them.
+def wcALetter = 0
+def wcAny = 1
+def wcCR = 2
+def wcDoubleQuote = 3
+def wcExtend = 4
+def wcExtendNumLet = 5
+def wcFormat = 6
+def wcHebrewLetter = 7
+def wcKatakana = 8
+def wcLF = 9
+def wcMidLetter = 10
+def wcMidNum = 11
+def wcMidNumLet = 12
+def wcNewline = 13
+def wcNumeric = 14
+def wcRegionalIndicator = 15
+def wcSingleQuote = 16
+def wcWSegSpace = 17
+def wcZWJ = 18
+
+-- The machine's states: the crate's `UWordBoundsState`, with its
+-- `FormatExtend` and `Regional` cases flattened.
+def sStart = 0
+def sLetter = 1
+def sHLetter = 2
+def sNumeric = 3
+def sKatakana = 4
+def sExtendNumLet = 5
+def sRegionalHalf = 6
+def sRegionalFull = 7
+def sZwj = 8
+def sEmoji = 9
+def sWSegSpace = 10
+def feAcceptNone = 11
+def feRequireLetter = 12
+def feRequireHLetter = 13
+def feAcceptQLetter = 14
+def feRequireNumeric = 15
+
+fun isFormatExtend c = c == wcExtend or c == wcFormat or c == wcZWJ
+
+fun isRequire state =
+  state == feRequireLetter or state == feRequireHLetter or state == feRequireNumeric
+
+fun catAt t i = wordCat (codeAt t i)
+
+-- Where a bound that stopped at character `i` ends: after it when `take`, and
+-- back at `saved` when a mid-word character found nothing to join.
+fun stop state i take saved = if isRequire state then saved else if take then i + 1 else i
+
+-- The transitions for a character of category `c` in `state`: the new state,
+-- or `0 - 1` to stop before the character, or `0 - 2` to stop after it.
+def stopBefore = 0 - 1
+def stopAfter = 0 - 2
+
+fun fromLetter state c =
+  if c == wcALetter
+  then sLetter
+  else if c == wcHebrewLetter
+  then sHLetter
+  else if c == wcNumeric
+  then sNumeric
+  else if c == wcExtendNumLet
+  then sExtendNumLet
+  else if c == wcDoubleQuote and state == sHLetter
+  then feRequireHLetter
+  else if c == wcSingleQuote and state == sHLetter
+  then feAcceptQLetter
+  else if c == wcMidLetter or c == wcMidNumLet or c == wcSingleQuote
+  then feRequireLetter
+  else stopBefore
+
+fun fromNumeric c =
+  if c == wcNumeric
+  then sNumeric
+  else if c == wcALetter
+  then sLetter
+  else if c == wcHebrewLetter
+  then sHLetter
+  else if c == wcExtendNumLet
+  then sExtendNumLet
+  else if c == wcMidNum or c == wcMidNumLet or c == wcSingleQuote
+  then feRequireNumeric
+  else stopBefore
+
+fun fromKatakana c =
+  if c == wcKatakana then sKatakana else if c == wcExtendNumLet then sExtendNumLet else stopBefore
+
+fun fromExtendNumLet c =
+  if c == wcExtendNumLet
+  then sExtendNumLet
+  else if c == wcALetter
+  then sLetter
+  else if c == wcHebrewLetter
+  then sHLetter
+  else if c == wcNumeric
+  then sNumeric
+  else if c == wcKatakana
+  then sKatakana
+  else stopBefore
+
+fun fromFormatExtend state c =
+  if state == feRequireNumeric and c == wcNumeric
+  then sNumeric
+  else if (state == feRequireLetter or state == feAcceptQLetter) and c == wcALetter
+  then sLetter
+  else if (state == feRequireLetter or state == feAcceptQLetter) and c == wcHebrewLetter
+  then sHLetter
+  else if state == feRequireHLetter and c == wcHebrewLetter
+  then sHLetter
+  else if state == feAcceptNone or state == feAcceptQLetter
+  then stopBefore
+  else stopAfter
+
+fun fromStart c =
+  if c == wcALetter
+  then sLetter
+  else if c == wcHebrewLetter
+  then sHLetter
+  else if c == wcNumeric
+  then sNumeric
+  else if c == wcKatakana
+  then sKatakana
+  else if c == wcExtendNumLet
+  then sExtendNumLet
+  else if c == wcRegionalIndicator
+  then sRegionalHalf
+  else if c == wcLF or c == wcNewline
+  then stopAfter
+  else if c == wcZWJ
+  then sZwj
+  else if c == wcWSegSpace
+  then sWSegSpace
+  else stopAfter
+
+-- A category the start state has no rule for, which WB999 breaks after unless
+-- formatting or extending characters follow (WB4).
+fun startsNothing c = fromStart c == stopAfter and c != wcLF and c != wcNewline
+
+-- One step for a character that WB4 and WB3c have not already dealt with.
+fun transition state c skipped =
+  if state == sStart
+  then fromStart c
+  else if state == sWSegSpace
+  then (if c == wcWSegSpace and not skipped then sWSegSpace else stopBefore)
+  else if state == sLetter or state == sHLetter
+  then fromLetter state c
+  else if state == sNumeric
+  then fromNumeric c
+  else if state == sKatakana
+  then fromKatakana c
+  else if state == sExtendNumLet
+  then fromExtendNumLet c
+  else if state == sRegionalHalf
+  then (if c == wcRegionalIndicator then sRegionalFull else stopBefore)
+  else if state == sRegionalFull or state == sZwj or state == sEmoji
+  then stopBefore
+  else fromFormatExtend state c
+
+fun formatFollows t i = i + 1 < count t and isFormatExtend (catAt t (i + 1))
+
+-- `prev` is the category of the character before `i`, which WB3c needs even
+-- when WB4 skipped it; `saved` is where to back up to.
+fun wordLoop t i state prev saved skipped =
+  if i >= count t
+  then stop state (i - 1) True saved
+  else
+    let c = catAt t i in
+    if state != sStart and isFormatExtend c
+    then wordLoop t (i + 1) state c saved True
+    else if prev == wcZWJ and isPictographic (codeAt t i)
+    then wordLoop t (i + 1) sEmoji c saved skipped
+    else if state == sStart and c == wcCR
+    then (if i + 1 < count t and catAt t (i + 1) == wcLF then i + 2 else i + 1)
+    else if state == sStart and startsNothing c and formatFollows t i
+    then wordLoop t (i + 1) feAcceptNone c saved skipped
+    else
+      let next = transition state c skipped in
+      if next == stopBefore
+      then stop state i False saved
+      else if next == stopAfter
+      then stop state i True saved
+      else
+        let saved2 = if isRequire next and not (isRequire state) then i else saved in
+        wordLoop t (i + 1) next c saved2 skipped
+
+-- The character index where the word bound starting at `start` ends.
+fun wordEnd t start = wordLoop t start sStart wcAny start False
+
+fun boundsFrom t start out =
+  if start >= count t
+  then out
+  else
+    let e = wordEnd t start in
+    boundsFrom t e (V.pushBack out e)
+
+-- The character index where each word bound ends.
+@pub(pkg) fun wordBoundEnds t = boundsFrom t 0 V.empty
+
+-- Whether the characters from `from` up to `to` include a letter or number.
+@pub(pkg) fun anyAlphanumeric t from to =
+  if from >= to then False else isAlphanumeric (codeAt t from) or anyAlphanumeric t (from + 1) to
+
+-- --- the ASCII segmenter ----------------------------------------------------------------
+--
+-- The crate's `AsciiWordBoundIter`, which `unicode_words` uses for an
+-- all-ASCII string. Positions here are bytes and characters both.
+
+fun isDigit b = b >= 48 and b <= 57
+
+fun isAlpha b = (b >= 65 and b <= 90) or (b >= 97 and b <= 122)
+
+fun isCore b = isDigit b or isAlpha b or b == 95
+
+fun isInfix b prev next =
+  ((b == 46 or b == 44 or b == 59 or b == 39) and isDigit prev and isDigit next)
+    or ((b == 39 or b == 46 or b == 58) and isAlpha prev and isAlpha next)
+
+fun byteOf t i = codeAt t i
+
+fun spaceRun t i = if i < count t and byteOf t i == 32 then spaceRun t (i + 1) else i
+
+fun coreRun t i =
+  if i >= count t
+  then i
+  else
+    let b = byteOf t i in
+    if isCore b or (i + 1 < count t and isInfix b (byteOf t (i - 1)) (byteOf t (i + 1)))
+    then coreRun t (i + 1)
+    else i
+
+fun asciiEnd t i =
+  let b = byteOf t i in
+  if b == 32
+  then spaceRun t (i + 1)
+  else if isCore b
+  then coreRun t (i + 1)
+  else if b == 13 and i + 1 < count t and byteOf t (i + 1) == 10
+  then i + 2
+  else i + 1
+
+fun isAsciiFrom t i = i >= count t or (byteOf t i < 128 and isAsciiFrom t (i + 1))
+
+fun asciiWordsFrom t start out =
+  if start >= count t
+  then out
+  else
+    let e = asciiEnd t start in
+    let keep = anyAlphanumeric t start e in
+    asciiWordsFrom t e (if keep then V.pushBack out (start, e) else out)
+
+fun unicodeWordsFrom t ends i start out =
+  if i >= V.len ends
+  then out
+  else
+    let e = V.getOr 0 ends i in
+    let keep = anyAlphanumeric t start e in
+    unicodeWordsFrom t ends (i + 1) e (if keep then V.pushBack out (start, e) else out)
+
+-- The words of `t`, as `(start, end)` character indices.
+@pub(pkg) fun wordSpans t =
+  if isAsciiFrom t 0
+  then asciiWordsFrom t 0 V.empty
+  else unicodeWordsFrom t (wordBoundEnds t) 0 0 V.empty

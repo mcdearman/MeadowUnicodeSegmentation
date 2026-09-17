@@ -1,0 +1,62 @@
+-- A string as the segmenters read it: its characters, where each one starts,
+-- and turning boundaries between characters back into pieces of the string.
+
+use Std.Collections.Vector as V
+
+-- How many bytes UTF-8 takes for the code point `cp`.
+fun utf8Len cp =
+  if cp < 0x80
+  then 1
+  else if cp < 0x800
+  then 2
+  else if cp < 0x10000
+  then 3
+  else 4
+
+fun offsetsFrom cs i at acc =
+  if i >= arrayLen cs
+  then V.pushBack acc at
+  else offsetsFrom cs (i + 1) (at + utf8Len (charCode (arrayGet cs i))) (V.pushBack acc at)
+
+-- `s` ready to segment: `source` is `s`, `chars` its characters, and
+-- `offsets` where each character starts in bytes, then the string's length.
+@pub(pkg) fun text s =
+  let cs = stringToChars s in
+  { source = s, chars = cs, offsets = V.toArray (offsetsFrom cs 0 0 V.empty) }
+
+-- How many characters `t` has.
+@pub(pkg) fun count t = arrayLen t.chars
+
+-- The code point of character `i`.
+@pub(pkg) fun codeAt t i = charCode (arrayGet t.chars i)
+
+-- Where character `i` starts, in bytes; `count t` gives the length.
+@pub(pkg) fun byteAt t i = arrayGet t.offsets i
+
+-- Which character starts at byte `b`, or `0 - 1` if none does.
+fun charAtFrom t b lo hi =
+  if lo > hi
+  then 0 - 1
+  else
+    let mid = (lo + hi) / 2 in
+    let at = byteAt t mid in
+    if at == b
+    then mid
+    else if at < b
+    then charAtFrom t b (mid + 1) hi
+    else charAtFrom t b lo (mid - 1)
+
+@pub(pkg) fun charAt t b = charAtFrom t b 0 (count t)
+
+-- The pieces between successive character indices in `ends`, each paired with
+-- where it starts in bytes.
+fun piecesFrom t ends i start out =
+  if i >= V.len ends
+  then out
+  else
+    let e = V.getOr 0 ends i in
+    let from = byteAt t start in
+    let to = byteAt t e in
+    piecesFrom t ends (i + 1) e (V.pushBack out (from, stringSlice t.source from to))
+
+@pub(pkg) fun piecesWithOffsets t ends = piecesFrom t ends 0 0 V.empty

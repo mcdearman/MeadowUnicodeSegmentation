@@ -1,0 +1,155 @@
+-- Sentence boundaries: UAX #29 section 5, as the crate implements it in
+-- `src/sentence.rs`.
+--
+-- The crate keeps the last four "parts" of the text read so far -- a run of
+-- closing punctuation or of spaces counts as one part -- and decides each
+-- boundary from them, looking ahead only for SB8.
+--
+-- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
+-- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
+
+use Std.Collections.Vector as V
+use unicodeSegmentation.Lookup (sentenceCat)
+use unicodeSegmentation.Text (count, codeAt)
+
+-- The categories, numbered as `Tables.mw` numbers them.
+def scATerm = 0
+def scAny = 1
+def scCR = 2
+def scClose = 3
+def scExtend = 4
+def scFormat = 5
+def scLF = 6
+def scLower = 7
+def scNumeric = 8
+def scOLetter = 9
+def scSContinue = 10
+def scSTerm = 11
+def scSep = 12
+def scSp = 13
+def scUpper = 14
+
+-- The parts.
+def pSot = 0
+def pEot = 1
+def pOther = 2
+def pCR = 3
+def pLF = 4
+def pSep = 5
+def pATerm = 6
+def pUpperLower = 7
+def pClosePlus = 8
+def pSpPlus = 9
+def pSTerm = 10
+
+fun partOf c =
+  if c == scCR
+  then pCR
+  else if c == scLF
+  then pLF
+  else if c == scSep
+  then pSep
+  else if c == scATerm
+  then pATerm
+  else if c == scUpper or c == scLower
+  then pUpperLower
+  else if c == scClose
+  then pClosePlus
+  else if c == scSp
+  then pSpPlus
+  else if c == scSTerm
+  then pSTerm
+  else pOther
+
+-- The state is the last four parts, oldest first.
+def initial = (pSot, pSot, pSot, pSot)
+
+fun advance state c =
+  match state with
+  | (p0, p1, p2, p3) ->
+      if (p3 == pClosePlus and c == scClose) or (p3 == pSpPlus and c == scSp)
+      then state
+      else (p1, p2, p3, partOf c)
+
+fun part state k =
+  match state with
+  | (p0, p1, p2, p3) -> if k == 0 then p0 else if k == 1 then p1 else if k == 2 then p2 else p3
+
+fun last state = part state 3
+
+fun isTerm p = p == pSTerm or p == pATerm
+
+fun isBreakLike c = c == scSep or c == scCR or c == scLF
+
+-- Skip back over a run of spaces and then of closers, as SB8 and SB8a do.
+fun beforeSpClose state =
+  let k = if last state == pSpPlus then 2 else 3 in
+  if part state k == pClosePlus then k - 1 else k
+
+-- SB8: an ATerm, then closers and spaces, then no letter of any case before a
+-- lower-case one, is not a boundary.
+fun lowerAhead t i =
+  if i >= count t
+  then False
+  else
+    let c = sentenceCat (codeAt t i) in
+    if c == scLower
+    then True
+    else if c == scOLetter or c == scUpper or isBreakLike c or c == scSTerm or c == scATerm
+    then False
+    else lowerAhead t (i + 1)
+
+fun matchSb8 state t i = part state (beforeSpClose state) == pATerm and lowerAhead t i
+
+fun matchSb8a state = isTerm (part state (beforeSpClose state))
+
+fun matchSb9 state = isTerm (part state (if last state == pClosePlus then 2 else 3))
+
+fun matchSb11 state =
+  let p = last state in
+  let k1 = if p == pSep or p == pCR or p == pLF then 2 else 3 in
+  let k2 = if part state k1 == pSpPlus then k1 - 1 else k1 in
+  let k3 = if part state k2 == pClosePlus then k2 - 1 else k2 in
+  isTerm (part state k3)
+
+-- What character `i`, of category `c`, does: `1` a boundary before it, `0`
+-- none, `2` none and it leaves the state as it was (SB5).
+fun decide before c t i =
+  if last before == pSot
+  then 1
+  else if c == scLF and last before == pCR
+  then 0
+  else if last before == pSep or last before == pCR or last before == pLF
+  then 1
+  else if c == scExtend or c == scFormat
+  then 2
+  else if c == scNumeric and last before == pATerm
+  then 0
+  else if c == scUpper and part before 2 == pUpperLower and last before == pATerm
+  then 0
+  else if matchSb8 before t i
+  then 0
+  else if (c == scSContinue or c == scSTerm or c == scATerm) and matchSb8a before
+  then 0
+  else if (c == scClose or c == scSp or isBreakLike c) and matchSb9 before
+  then 0
+  else if (c == scSp or isBreakLike c) and matchSb8a before
+  then 0
+  else if matchSb11 before
+  then 1
+  else 0
+
+fun breaksFrom t i state out =
+  if i >= count t
+  then (if last state == pSot or last state == pEot then out else V.pushBack out i)
+  else
+    let c = sentenceCat (codeAt t i) in
+    let d = decide state c t i in
+    let next = if d == 2 then state else advance state c in
+    breaksFrom t (i + 1) next (if d == 1 then V.pushBack out i else out)
+
+-- The character index where each sentence bound ends. The crate reports a
+-- break at the start of the text too, which pairs up with the first end.
+@pub(pkg) fun sentenceEnds t =
+  let breaks = breaksFrom t 0 initial V.empty in
+  V.drop breaks 1

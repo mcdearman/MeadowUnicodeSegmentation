@@ -1,0 +1,56 @@
+-- Reading the tables in `Tables.mw`.
+--
+-- Each table is a string of fixed-width records whose fields are base-64
+-- digits, `'0'` standing for 0 up to `'o'` for 63, most significant first. A
+-- digit is one byte, and `stringByteAt` reads a byte in constant time, so a
+-- lookup is a binary search over the string where it lies.
+--
+-- Copyright 2012-2025 The Rust Project Developers, and the Meadow port's
+-- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
+
+use unicodeSegmentation.Tables
+
+-- `toInt` first: a byte is a `UInt8`, and arithmetic on it would wrap at 256.
+fun digit s i = toInt (stringByteAt s i) - 48
+
+fun pair s i = digit s i * 64 + digit s (i + 1)
+
+fun codePoint s i = pair s i * 4096 + pair s (i + 2)
+
+-- Where the record holding `cp` starts in `table`, whose records are `size`
+-- digits and start with `lo hi`; or `0 - 1` when no record holds it.
+fun searchFrom table size cp lo hi =
+  if lo >= hi
+  then 0 - 1
+  else
+    let mid = (lo + hi) / 2 in
+    let at = mid * size in
+    if cp < codePoint table at
+    then searchFrom table size cp lo mid
+    else if cp > codePoint table (at + 4)
+    then searchFrom table size cp (mid + 1) hi
+    else at
+
+fun search table size cp = searchFrom table size cp 0 (stringByteLength table / size)
+
+-- The value a `lo hi value` table gives `cp`, or `default` if it lists no
+-- range holding it.
+fun valueIn table default cp =
+  let at = search table 9 cp in
+  if at < 0 then default else digit table (at + 8)
+
+fun inRanges table cp = search table 8 cp >= 0
+
+@pub(pkg) fun graphemeCat cp = valueIn graphemeCats 0 cp
+
+@pub(pkg) fun wordCat cp = valueIn wordCats 1 cp
+
+@pub(pkg) fun sentenceCat cp = valueIn sentenceCats 1 cp
+
+@pub(pkg) fun isPictographic cp = inRanges extendedPictographic cp
+
+@pub(pkg) fun isIncbLinker cp = inRanges incbLinker cp
+
+@pub(pkg) fun isIncbExtend cp = inRanges incbExtend cp
+
+@pub(pkg) fun isAlphanumeric cp = inRanges alphanumeric cp

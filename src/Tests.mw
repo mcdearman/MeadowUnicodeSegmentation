@@ -1,0 +1,114 @@
+-- The port against the crate: every string in `Cases.mw`, whose expected
+-- segmentations came from calling the crate itself, plus a few examples.
+--
+-- Every declaration carries `@cfg(test)`, as the tests are no part of the
+-- package.
+
+@cfg(test)
+use Std.Test (assertEq)
+@cfg(test)
+use Std.Collections.Vector as V
+@cfg(test)
+use unicodeSegmentation.Cases (cases)
+@cfg(test)
+use unicodeSegmentation.Segment
+
+@cfg(test)
+fun digit i = toInt (stringByteAt cases i) - 48
+
+@cfg(test)
+fun field i = (digit i * 64 + digit (i + 1)) * 64 + digit (i + 2)
+
+-- The list at `at`, of items `per` fields long, as its fields in order; and
+-- where it ends.
+@cfg(test)
+fun readList at per =
+  let n = field at * per in
+  (V.map (\k -> field (at + 3 + 3 * k)) (V.range 0 n), at + 3 + 3 * n)
+
+@cfg(test)
+fun pairUp flat =
+  let at = \k -> V.getOr 0 flat k in
+  V.map (\k -> (at (2 * k), at (2 * k + 1))) (V.range 0 (V.len flat / 2))
+
+@cfg(test)
+fun endOf p =
+  match p with
+  | (at, piece) -> at + stringByteLength piece
+
+@cfg(test)
+fun spanOf p =
+  match p with
+  | (at, piece) -> (at, at + stringByteLength piece)
+
+@cfg(test)
+fun slices s pairs =
+  V.map
+    (\p ->
+      match p with
+      | (a, b) -> stringSlice s a b)
+    pairs
+
+-- What this port says of `s`, in the order `Cases.mw` lists it.
+@cfg(test)
+fun actual s =
+  (
+    V.map endOf (graphemeIndices True s),
+    V.map endOf (graphemeIndices False s),
+    V.map endOf (splitWordBoundIndices s),
+    V.map spanOf (unicodeWordIndices s),
+    V.map endOf (splitSentenceBoundIndices s),
+    unicodeSentences s
+  )
+
+-- The failures from byte `at` on, as (string, expected, actual).
+@cfg(test)
+fun check at bad =
+  if at >= stringByteLength cases
+  then bad
+  else
+    let len = field at in
+    let s = stringSlice cases (at + 3) (at + 3 + len) in
+    let r1 = readList (at + 3 + len) 1 in
+    let r2 = readList (snd r1) 1 in
+    let r3 = readList (snd r2) 1 in
+    let r4 = readList (snd r3) 2 in
+    let r5 = readList (snd r4) 1 in
+    let r6 = readList (snd r5) 2 in
+    let expected = (fst r1, fst r2, fst r3, pairUp (fst r4), fst r5, slices s (pairUp (fst r6))) in
+    let got = actual s in
+    check (snd r6) (if got == expected then bad else V.pushBack bad (s, expected, got))
+
+-- Failures list (string, expected, actual); each segmentation is the byte
+-- offsets where extended graphemes, legacy graphemes and word bounds end, the
+-- words' (start, end), where sentence bounds end, and the sentences.
+@cfg(test)
+@test fun segmentationsMatchTheCrate () =
+  assertEq (V.take (check 0 V.empty) 5) [] "strings segmented differently from the crate"
+
+@cfg(test)
+@test fun examples () =
+  let marks = "a\u{310}e\u{301}o\u{308}\u{332}" in
+  let a = assertEq (graphemes True marks) ["a\u{310}", "e\u{301}", "o\u{308}\u{332}"] "graphemes" in
+  let b =
+    assertEq
+      (unicodeWords "The quick (\"brown\") fox can't jump 32.3 feet, right?")
+      ["The", "quick", "brown", "fox", "can't", "jump", "32.3", "feet", "right"]
+      "words"
+  in
+  let c = assertEq (splitWordBounds "Hi, you!") ["Hi", ",", " ", "you", "!"] "word bounds" in
+  let d =
+    assertEq
+      (unicodeSentences "Mr. Fox jumped. [...] The dog was too lazy.")
+      ["Mr. ", "Fox jumped. ", "The dog was too lazy."]
+      "sentences"
+  in
+  let rs = "\u{1F1F7}\u{1F1F8}" in
+  let io = "\u{1F1EE}\u{1F1F4}" in
+  let e = assertEq (graphemes True (rs ++ io)) [rs, io] "flags" in
+  let f = assertEq (graphemes False "\u{915}\u{93F}") ["\u{915}", "\u{93F}"] "legacy" in
+  let g = assertEq (graphemes True "\u{915}\u{93F}") ["\u{915}\u{93F}"] "extended" in
+  let h = assertEq (nextGraphemeBoundary True 0 "e\u{301}x") (Just 3) "next boundary" in
+  let i = assertEq (prevGraphemeBoundary True 3 "e\u{301}x") (Just 0) "previous boundary" in
+  let j = assertEq (isGraphemeBoundary True 1 "e\u{301}x") False "inside a cluster" in
+  assertEq unicodeVersion (17, 0, 0) "unicode version"

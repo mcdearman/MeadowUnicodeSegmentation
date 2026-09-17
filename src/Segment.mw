@@ -1,0 +1,102 @@
+-- The package's surface, re-exported by `Lib.mw`.
+--
+-- Following `Std.String`, the string comes last and offsets are in bytes.
+
+use Std.Collections.Vector as V
+use unicodeSegmentation.Tables as T
+use unicodeSegmentation.Text (text, count, byteAt, charAt, piecesWithOffsets)
+use unicodeSegmentation.Grapheme (graphemeEnds, boundaryBefore)
+use unicodeSegmentation.Word (wordBoundEnds, wordSpans)
+use unicodeSegmentation.Sentence (sentenceEnds)
+use unicodeSegmentation.Lookup (isAlphanumeric)
+
+fun strip pieces = V.map snd pieces
+
+fun spanPieces t spans =
+  V.map
+    (\span ->
+      match span with
+      | (from, to) ->
+          let a = byteAt t from in
+          (a, stringSlice t.source a (byteAt t to)))
+    spans
+
+-- --- graphemes ------------------------------------------------------------------------
+
+-- The grapheme clusters of `s`: what a reader takes for one character. With
+-- `extended`, the extended clusters UAX #29 recommends, which keep spacing
+-- marks and prepended characters with their base; without, the legacy ones.
+@pub fun graphemes extended s = strip (graphemeIndices extended s)
+
+-- The same, each with the byte offset it starts at.
+@pub fun graphemeIndices extended s =
+  let t = text s in
+  piecesWithOffsets t (graphemeEnds t extended)
+
+-- Whether byte `offset` of `s` is between two grapheme clusters. The start and
+-- end of the string are; an offset inside a character is not.
+@pub fun isGraphemeBoundary extended offset s =
+  let t = text s in
+  let i = charAt t offset in
+  if i < 0 then False else if i == 0 or i == count t then True else boundaryBefore t extended i
+
+fun seekForward t extended i =
+  if i >= count t or boundaryBefore t extended i then i else seekForward t extended (i + 1)
+
+fun seekBack t extended i =
+  if i <= 0 then 0 else if boundaryBefore t extended i then i else seekBack t extended (i - 1)
+
+-- The first grapheme boundary after byte `offset`, or `None` at the end. For
+-- moving a cursor one character to the right.
+@pub fun nextGraphemeBoundary extended offset s =
+  let t = text s in
+  let i = charAt t offset in
+  if i < 0 or i >= count t then None else Just (byteAt t (seekForward t extended (i + 1)))
+
+-- The last grapheme boundary before byte `offset`, or `None` at the start. For
+-- moving a cursor one character to the left.
+@pub fun prevGraphemeBoundary extended offset s =
+  let t = text s in
+  let i = charAt t offset in
+  if i <= 0 then None else Just (byteAt t (seekBack t extended (i - 1)))
+
+-- --- words ------------------------------------------------------------------------------
+
+-- `s` split at every word boundary: words, and the spaces and punctuation
+-- between them, which put back together make `s`.
+@pub fun splitWordBounds s = strip (splitWordBoundIndices s)
+
+-- The same, each with the byte offset it starts at.
+@pub fun splitWordBoundIndices s =
+  let t = text s in
+  piecesWithOffsets t (wordBoundEnds t)
+
+-- The words of `s`: the pieces between word boundaries that have a letter or a
+-- number in them.
+@pub fun unicodeWords s = strip (unicodeWordIndices s)
+
+-- The same, each with the byte offset it starts at.
+@pub fun unicodeWordIndices s =
+  let t = text s in
+  spanPieces t (wordSpans t)
+
+-- --- sentences --------------------------------------------------------------------------
+
+-- `s` split at every sentence boundary, trailing spaces kept with the sentence
+-- before them.
+@pub fun splitSentenceBounds s = strip (splitSentenceBoundIndices s)
+
+-- The same, each with the byte offset it starts at.
+@pub fun splitSentenceBoundIndices s =
+  let t = text s in
+  piecesWithOffsets t (sentenceEnds t)
+
+fun hasAlphanumeric piece =
+  V.any (\c -> isAlphanumeric (charCode c)) (V.fromArray (stringToChars piece))
+
+-- The sentences of `s`: the pieces between sentence boundaries that have a
+-- letter or a number in them.
+@pub fun unicodeSentences s = V.filter hasAlphanumeric (splitSentenceBounds s)
+
+-- The version of Unicode the tables follow, as `(major, minor, update)`.
+@pub def unicodeVersion = T.unicodeVersion
