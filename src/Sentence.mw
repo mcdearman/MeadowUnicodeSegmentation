@@ -9,8 +9,8 @@
 -- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
 
 use Std.Collections.Vector as V
-use unicodeSegmentation.Lookup (sentenceCat)
-use unicodeSegmentation.Text (count, codeAt)
+use UnicodeSegmentation.Lookup (sentenceCat)
+use UnicodeSegmentation.Text (count, codeAt)
 
 -- The categories, numbered as `Tables.mw` numbers them.
 def scATerm = 0

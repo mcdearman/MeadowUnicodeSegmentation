@@ -12,8 +12,8 @@
 -- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
 
 use Std.Collections.Vector as V
-use unicodeSegmentation.Lookup (graphemeCat, isIncbLinker, isIncbExtend)
-use unicodeSegmentation.Text (count, codeAt)
+use UnicodeSegmentation.Lookup (graphemeCat, isIncbLinker, isIncbExtend)
+use UnicodeSegmentation.Text (count, codeAt)
 
 -- The categories, numbered as `Tables.mw` numbers them.
 def gcAny = 0

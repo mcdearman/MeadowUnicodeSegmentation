@@ -6,7 +6,7 @@
 -- `scripts/generate.sh`, and the tests hold this port to the crate's answers
 -- and to the official Unicode test data.
 --
---   use unicodeSegmentation (graphemes, unicodeWords)
+--   use UnicodeSegmentation (graphemes, unicodeWords)
 --
 --   graphemes True "a\u{310}e\u{301}o\u{308}\u{332}"  -- ["a̐", "é", "ö̲"]
 --   unicodeWords "The quick (\"brown\") fox can't jump 32.3 feet, right?"
@@ -24,7 +24,7 @@ mod Cases
 @cfg(test)
 mod Tests
 
-@pub use unicodeSegmentation.Segment (
+@pub use UnicodeSegmentation.Segment (
   graphemes,
   graphemeIndices,
   isGraphemeBoundary,

@@ -15,8 +15,8 @@
 -- authors. Dual-licensed under Apache-2.0 or MIT: see COPYRIGHT.
 
 use Std.Collections.Vector as V
-use unicodeSegmentation.Lookup (wordCat, isPictographic, isAlphanumeric)
-use unicodeSegmentation.Text (count, codeAt, byteAt)
+use UnicodeSegmentation.Lookup (wordCat, isPictographic, isAlphanumeric)
+use UnicodeSegmentation.Text (count, codeAt, byteAt)
 
 -- The categories, numbered as `Tables.mw` numbers them.
 def wcALetter = 0

@@ -9,9 +9,9 @@ use Std.Test (assertEq)
 @cfg(test)
 use Std.Collections.Vector as V
 @cfg(test)
-use unicodeSegmentation.Cases (cases)
+use UnicodeSegmentation.Cases (cases)
 @cfg(test)
-use unicodeSegmentation.Segment
+use UnicodeSegmentation.Segment
 
 @cfg(test)
 fun digit i = toInt (stringByteAt cases i) - 48

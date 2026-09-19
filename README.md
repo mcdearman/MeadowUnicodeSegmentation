@@ -13,13 +13,13 @@ cursor, truncating a label, reversing a string, or counting words.
 ## Install
 
 ```sh
-meadow add mcdearman/meadow-unicode-segmentation
+meadow add mcdearman/MeadowUnicodeSegmentation
 ```
 
 ## Use
 
 ```meadow
-use unicodeSegmentation (graphemes, unicodeWords, unicodeSentences)
+use UnicodeSegmentation (graphemes, unicodeWords, unicodeSentences)
 
 def main =
   ( graphemes True "a\u{310}e\u{301}o\u{308}\u{332}",

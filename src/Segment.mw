@@ -3,12 +3,12 @@
 -- Following `Std.String`, the string comes last and offsets are in bytes.
 
 use Std.Collections.Vector as V
-use unicodeSegmentation.Tables as T
-use unicodeSegmentation.Text (text, count, byteAt, charAt, piecesWithOffsets)
-use unicodeSegmentation.Grapheme (graphemeEnds, boundaryBefore)
-use unicodeSegmentation.Word (wordBoundEnds, wordSpans)
-use unicodeSegmentation.Sentence (sentenceEnds)
-use unicodeSegmentation.Lookup (isAlphanumeric)
+use UnicodeSegmentation.Tables as T
+use UnicodeSegmentation.Text (text, count, byteAt, charAt, piecesWithOffsets)
+use UnicodeSegmentation.Grapheme (graphemeEnds, boundaryBefore)
+use UnicodeSegmentation.Word (wordBoundEnds, wordSpans)
+use UnicodeSegmentation.Sentence (sentenceEnds)
+use UnicodeSegmentation.Lookup (isAlphanumeric)
 
 fun strip pieces = V.map snd pieces
 
