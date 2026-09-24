@@ -13,7 +13,7 @@ cursor, truncating a label, reversing a string, or counting words.
 ## Install
 
 ```sh
-meadow add mcdearman/MeadowUnicodeSegmentation
+meadow add mcdearman/UnicodeSegmentation
 ```
 
 ## Use
